@@ -1,0 +1,191 @@
+# ============================================================
+# RBSA-ML — Phase 1 : Actions & Fonds Actions
+# Configuration globale (versionnée avec chaque dataset généré)
+# ============================================================
+
+seed: 42
+
+calendar:
+  start: "2013-01-11"         # premier vendredi disponible dans les données réelles
+  end: "2026-07-24"
+  freq: "W-FRI"               # vendredi de clôture BVC
+
+# ---------- Étape A : espace de style ----------
+style_space:
+  # K = 24 secteurs MASI/ASFIM (noms EXACTS des dossiers data/masi/<SECTEUR>/
+  # et des colonnes de data/masi_indices/sector_indices.csv — zéro mapping
+  # fragile entre la config et les données réelles).
+  sectors:
+    - "AGROALIMENTAIRE_ET_PRODUCTION"
+    - "ASSURANCES"
+    - "BANQUES"
+    - "BATIMENT_ET_MATERIAUX_DE_CONSTRUCTION"
+    - "BOISSONS"
+    - "CHIMIE"
+    - "DISTRIBUTEURS"
+    - "ELECTRICITE"
+    - "INDUSTRIE_AGRICOLE"
+    - "INDUSTRIE_PHARMACEUTIQUE"
+    - "INGENIERIES_ET_BIENS_DEQUIPEMENT_INDUSTRIELS"
+    - "LOISIRS_ET_HOTELS"
+    - "MATERIELS_LOGICIELS_ET_SERVICES_INFORMATIQUES"
+    - "MINES"
+    - "PARTICIPATION_ET_PROMOTION_IMMOBILIERES"
+    - "PETROLE_ET_GAZ"
+    - "SANTE"
+    - "SERVICES_DE_TRANSPORT"
+    - "SOCIETES_DE_FINANCEMENT_ET_AUTRES_ACTIVITES_FINANCIERES"
+    - "SOCIETES_DE_PLACEMENT_IMMOBILIER"
+    - "SOCIETES_DE_PORTEFEUILLES_HOLDINGS"
+    - "SYLVICULTURE_ET_PAPIER"
+    - "TELECOMMUNICATIONS"
+    - "TRANSPORT"
+  cash_factor: "CASH"        # MONIA hebdo approx. taux directeur BAM / 52
+  weighting: "equal"         # "equal" | "cap" (cap-weighted si capitalisations dispo)
+  # Matrice de passage 24 -> macro-secteurs (baseline QP, interprétabilité)
+  macro_map:
+    "Financières":             ["BANQUES", "ASSURANCES", "SOCIETES_DE_FINANCEMENT_ET_AUTRES_ACTIVITES_FINANCIERES", "SOCIETES_DE_PORTEFEUILLES_HOLDINGS"]
+    "Immobilier & BTP":        ["PARTICIPATION_ET_PROMOTION_IMMOBILIERES", "SOCIETES_DE_PLACEMENT_IMMOBILIER", "BATIMENT_ET_MATERIAUX_DE_CONSTRUCTION"]
+    "Consommation":            ["AGROALIMENTAIRE_ET_PRODUCTION", "BOISSONS", "DISTRIBUTEURS", "INDUSTRIE_AGRICOLE"]
+    "Énergie & Utilities":     ["PETROLE_ET_GAZ", "ELECTRICITE"]
+    "Mines & Matériaux":       ["MINES", "CHIMIE", "SYLVICULTURE_ET_PAPIER"]
+    "Télécom & Technologies":  ["TELECOMMUNICATIONS", "MATERIELS_LOGICIELS_ET_SERVICES_INFORMATIQUES"]
+    "Santé":                   ["INDUSTRIE_PHARMACEUTIQUE", "SANTE"]
+    "Industrie & Transport":   ["TRANSPORT", "SERVICES_DE_TRANSPORT", "INGENIERIES_ET_BIENS_DEQUIPEMENT_INDUSTRIELS"]
+    "Tourisme & Loisirs":      ["LOISIRS_ET_HOTELS"]
+
+  # Données réelles — dossiers masi/<SECTEUR>/<TITRE>.csv (format Investing.com :
+  # Date, Price, Open, High, Low, Vol., Change %) : utilisées en repli.
+  real_data_dir: "data/masi"
+  # Indices sectoriels PRÉCALCULÉS (niveaux, base 1000) — source préférée,
+  # déjà nettoyée (stale pricing, ticks aberrants, renouvellement de l'univers).
+  precomputed_index_file: "data/masi_indices/sector_indices.csv"
+  precomputed_index_file_cap: "data/masi_indices/sector_indices_cap.csv"
+  # Instantanés hebdomadaires ASFIM (un .xlsx par semaine, toutes classifications)
+  asfim_snapshots_dir: "data/asfim_hebdomadaire"
+  asfim_classification: "ACTIONS"   # filtre Étape E : fonds Actions uniquement
+  # Écrêtage des rendements sectoriels RÉELS (± 60%/semaine) : certains
+  # secteurs ne comptent qu'un seul titre peu liquide (cf. data_quality_report,
+  # ex. INGENIERIES après la radiation de Delattre Levivier en 2023) — un
+  # tick isolé à +600% déstabiliserait sinon l'entraînement. N'affecte jamais
+  # le simulateur synthétique (déjà borné par construction).
+  winsorize_abs: 0.60
+
+# ---------- Simulateur de marché synthétique (tant que real_data_dir absent) ----------
+synthetic_market:
+  weekly_vol_range: [0.012, 0.030]   # vol hebdo par secteur
+  market_beta_range: [0.6, 1.3]      # exposition au facteur marché commun
+  market_vol: 0.016                  # vol hebdo du facteur marché (~MASI)
+  block_vol: 0.008                   # facteur de bloc (co-intégration intra-macro-secteur)
+  drift_annual_range: [0.00, 0.10]
+  # Taux directeur BAM (piecewise, pour le facteur CASH)
+  bam_rates:
+    "2013-01-01": 0.0300
+    "2014-09-24": 0.0275
+    "2014-12-17": 0.0250
+    "2016-03-23": 0.0225
+    "2020-03-18": 0.0200
+    "2020-06-17": 0.0150
+    "2022-09-28": 0.0200
+    "2022-12-21": 0.0250
+    "2023-03-22": 0.0300
+    "2024-06-26": 0.0275
+    "2025-03-19": 0.0225
+
+# ---------- Étape B : générateur de portefeuilles ----------
+generator:
+  # ratios d'archétypes ~ typologie AMMC/ASFIM
+  archetype_mix:
+    quasi_indiciel: 0.25
+    diversifie: 0.40
+    paris_sectoriels: 0.20
+    concentre: 0.15
+  n_portfolios:            # mode "full" : viser 20000-50000 au total
+    train: 800
+    val: 200
+    test: 200
+  n_portfolios_quick:      # mode démo/CI
+    train: 300
+    val: 80
+    test: 80
+  splits:                  # fuite temporelle : split par PÉRIODE et par PORTEFEUILLE
+    train: ["2013-01-01", "2020-12-31"]
+    val:   ["2021-01-01", "2022-12-31"]
+    test:  ["2023-01-01", "2026-07-31"]
+  fees_annual_range: [0.010, 0.025]      # frais de gestion déduits de la VL
+  # tracking error intra-secteur hebdo. Calibré EMPIRIQUEMENT sur le résidu
+  # observé entre les VL réelles ASFIM (fonds Actions) et leur meilleure
+  # combinaison sectorielle par QP glissante 52 sem. : résidu hebdo médian
+  # ≈ 0,0049 (p10=0,0048, p90=0,0054) sur un échantillon de fonds réels —
+  # d'où la plage ci-dessous, élargie pour couvrir aussi les stock-pickers
+  # plus concentrés (tracking error plus élevé).
+  idio_vol_range: [0.003, 0.012]
+  style_drift_vol:                       # marche aléatoire sur le simplexe (logit-space)
+    quasi_indiciel: 0.010
+    diversifie: 0.030
+    paris_sectoriels: 0.060
+    concentre: 0.050
+  cash_range:
+    quasi_indiciel: [0.01, 0.05]
+    diversifie: [0.05, 0.15]
+    paris_sectoriels: [0.03, 0.12]
+    concentre: [0.02, 0.10]
+  rebalance_weeks: 4                     # les poids ne bougent qu'au rebalancement
+  jump_prob:                             # proba (par rebalancement) d'une rotation brutale
+    quasi_indiciel: 0.01
+    diversifie: 0.04
+    paris_sectoriels: 0.12
+    concentre: 0.10
+  jump_scale: 2.0                        # amplitude du choc en logit-space
+
+# ---------- Étape C : modèle inverse ----------
+model:
+  window: 26               # T fenêtre glissante (26 ou 52)
+  seq_len: 78              # longueur des séquences d'entraînement du GRU
+  mlp:
+    hidden: [256, 128]
+    dropout: 0.15
+  gru:
+    hidden_size: 96
+    num_layers: 2
+    dropout: 0.15
+  loss:
+    weights: "kl"          # "mse" | "kl"  (θ* est une distribution sur le simplexe)
+    lambda_reconstruction: 0.6   # λ ∈ [0.1, 1] — perte physique y ≈ X·θ̂ : renforcée
+    # sur données réelles, les secteurs marocains sont fortement corrélés
+    # (cf. rapport §multicollinéarité) : l'appariement exact des poids est mal
+    # identifié, mais la reconstruction y ≈ X·θ̂ reste bien identifiée — on lui
+    # donne plus de poids pour éviter que le modèle ne s'installe dans l'optimum
+    # dégénéré « prédire la distribution moyenne » dès la 1ère époque.
+    lambda_rotation: 0.5         # poids du terme MSE(Δθ̂, Δθ*) — anti-lissage (GRU)
+  training:
+    batch_size: 64
+    lr: 5.0e-4              # abaissé (était 1e-3) : convergence plus stable sur données réelles
+    epochs: 60
+    epochs_quick: 12
+    patience: 15            # relevé (était 8) : laisse dépasser le plateau initial
+    grad_clip: 1.0
+
+# ---------- Étape D : baseline QP ----------
+qp_baseline:
+  window: 52               # fenêtre glissante 52 semaines
+  ridge_lambdas: [1.0e-4, 1.0e-3, 1.0e-2, 1.0e-1]   # calibrés par validation temporelle
+  solver: "OSQP"
+
+# ---------- Étape E : application OPCVM ----------
+compliance:
+  min_equity_weight: 0.60      # Σ poids sectoriels (hors cash) ≥ 60 % (fonds Actions)
+  min_replication_r2: 0.70     # alerte si R² < 0.70
+  style_drift_zscore: 3.0      # alerte si ‖θ̂_t − θ̄‖ > seuil calibré sur les pairs
+  style_drift_min_consecutive_weeks: 3   # exige une dérive SOUTENUE (pas un pic isolé) avant d'alerter
+
+evaluation:
+  shock_scenarios: 20          # portefeuilles à choc +20 pts pour le retard de détection
+  shock_size: 0.20
+  qp_eval_portfolios: 60       # sous-échantillon test pour la QP (coût de calcul)
+
+paths:
+  outputs: "outputs"
+  dataset: "outputs/dataset"
+  models: "outputs/models"
+  runs_log: "outputs/runs.csv"
